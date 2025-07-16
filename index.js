@@ -31,7 +31,7 @@ function getOrCreateSession(guildId, voiceChannel, interaction) {
         player.on(AudioPlayerStatus.Idle, () => {
             session.queue.shift();
             if (session.queue.length > 0) {
-                playNext(guildId);
+                playNext(guildId, interaction);
             } else {
                 session.leaveTimeout = setTimeout(() => {
                     connection.destroy();
@@ -45,7 +45,7 @@ function getOrCreateSession(guildId, voiceChannel, interaction) {
             console.error('Audio player error:', error);
             session.queue.shift();
             if (session.queue.length > 0) {
-                playNext(guildId);
+                playNext(guildId, interaction);
             } else {
                 connection.destroy();
                 queues.delete(guildId);
@@ -66,10 +66,10 @@ function getAudioStream(url) {
         '-o', '-',
         '-f', 'bestaudio',
         '--cookies', `${cookieLocation}/yt_cookies.txt`,
-        '--no-playlist', url], { stdio: ['ignore', 'pipe', 'ignore'] });
+        '--no-playlist', url], { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-async function playNext(guildId) {
+async function playNext(guildId, interaction) {
     const session = queues.get(guildId);
     if (!session || session.queue.length === 0) return;
 
@@ -86,23 +86,32 @@ async function playNext(guildId) {
 
         console.log(`${new Date().toLocaleString()}\n🎵 Now playing: ${song.title}\n`);
 
+        // Collect stderr in case it fails
+        let errorOutput = '';
+
+        ytProcess.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+        });
+
         ytProcess.on('error', error => {
             console.error('yt-dlp process error:', error);
-            interaction.reply(`Error: Please notify the person who runs the bot!\nError: ${error}`)
             session.player.stop();
         });
 
         ytProcess.on('close', code => {
-            if (code !== 0) {
+            if (code !== 0 && !errorOutput.includes('Broken pipe')) {
                 console.error(`yt-dlp process exited with code ${code}`);
-                interaction.reply(`Error: Likely YT cookies expired, need to renew them.\nPlease notify the person who runs the bot!\nCode: ${code}`)
+                console.error('yt-dlp stderr:\n' + errorOutput);
+                if (interaction && !interaction.replied) {
+                    interaction.reply(`❌ yt-dlp failed:\n\`\`\`${errorOutput.slice(0, 1500)}\`\`\``);
+                }
             }
         });
 
     } catch (err) {
         console.error('Failed to play:', err);
         session.queue.shift();
-        playNext(guildId);
+        playNext(guildId, interaction);
     }
 }
 
@@ -159,7 +168,7 @@ client.on('interactionCreate', async interaction => {
                         for await (const chunk of getTitle.stdout) {
                             output += chunk.toString();
                         }
-                        
+
                         title = output.trim();
 
                         if (!title) {
@@ -196,7 +205,7 @@ client.on('interactionCreate', async interaction => {
                     session.queue.push({ title, url });
 
                     if (session.queue.length === 1) {
-                        playNext(guildId);
+                        playNext(guildId, interaction);
                     }
 
                     return interaction.editReply(`🎵 Queued: ${title} - ${url}`);
