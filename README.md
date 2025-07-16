@@ -5,7 +5,7 @@ link to invite the bot with: https://discord.com/oauth2/authorize?client_id=1394
 
 - can search youtube and work with urls
 
-# usage:
+# install:
 1. create bot over at discord with these details:
     - oauth2: 
         - scope: application.commands, bot
@@ -14,5 +14,15 @@ link to invite the bot with: https://discord.com/oauth2/authorize?client_id=1394
     - bot: 
         - reset token and save it for the .env file with the client id
         - public bot with presence, server members and message content intent enabled
-2. register commands
-3. launch index.js
+2. npm install and pip install yt-dlp (make sure it is in path, try with yt-dlp --version)
+3. deploy commands
+4. get proper cookies in netscape form in order to pass youtube's bot prevention (name it yt_cookies.txt)
+5. launch index.js
+
+# usage:
+/play url or search
+/stop to stop playing
+/clear to clear queue
+/skip to next
+/pause (bot will dc in 1 min!)
+/resume

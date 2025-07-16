@@ -4,7 +4,7 @@ const { REST, Routes, SlashCommandBuilder } = require('discord.js');
 const commands = [
     new SlashCommandBuilder()
         .setName('hello')
-        .setDescription('Test if bot is alive'),
+        .setDescription('Get some information about the bot'),
 
     new SlashCommandBuilder()
         .setName('play')
@@ -14,6 +14,8 @@ const commands = [
         ),
 
     new SlashCommandBuilder().setName('stop').setDescription('Stop playback and leave'),
+    new SlashCommandBuilder().setName('pause').setDescription('Pause playing'),
+    new SlashCommandBuilder().setName('resume').setDescription('Resume playing'),
     new SlashCommandBuilder().setName('skip').setDescription('Skip the current song'),
     new SlashCommandBuilder().setName('queue').setDescription('Show the current queue'),
     new SlashCommandBuilder().setName('clear').setDescription('Clear the queue'),

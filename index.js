@@ -13,6 +13,8 @@ const client = new Client({
 
 const queues = new Map();
 
+const cookieLocation = "/home/bence/discord_bot_yt_player";
+
 function getOrCreateSession(guildId, voiceChannel, interaction) {
     let session = queues.get(guildId);
     if (!session) {
@@ -31,8 +33,11 @@ function getOrCreateSession(guildId, voiceChannel, interaction) {
             if (session.queue.length > 0) {
                 playNext(guildId);
             } else {
-                connection.destroy();
-                queues.delete(guildId);
+                session.leaveTimeout = setTimeout(() => {
+                    connection.destroy();
+                    queues.delete(guildId);
+                    console.log(`🔌 Disconnected from ${guildId} after 60s idle.`);
+                }, 60000);
             }
         });
 
@@ -47,7 +52,7 @@ function getOrCreateSession(guildId, voiceChannel, interaction) {
             }
         });
 
-        session = { connection, player, queue: [] };
+        session = { connection, player, queue: [], leaveTimeout: null };
         queues.set(guildId, session);
     }
     return session;
@@ -57,7 +62,11 @@ function getAudioStream(url) {
     // Spawn yt-dlp to output raw audio stream to stdout
     // '-o', '-' : output to stdout
     // '-f', 'bestaudio' : best audio format available
-    return spawn('yt-dlp', ['-o', '-', '-f', 'bestaudio', '--no-playlist', url], { stdio: ['ignore', 'pipe', 'ignore'] });
+    return spawn('yt-dlp', [
+        '-o', '-',
+        '-f', 'bestaudio',
+        '--cookies', `${cookieLocation}/yt_cookies.txt`,
+        '--no-playlist', url], { stdio: ['ignore', 'pipe', 'ignore'] });
 }
 
 async function playNext(guildId) {
@@ -75,16 +84,18 @@ async function playNext(guildId) {
 
         session.player.play(resource);
 
-        console.log(`🎵 Now playing: ${song.title}`);
+        console.log(`${new Date().toLocaleString()}\n🎵 Now playing: ${song.title}\n`);
 
         ytProcess.on('error', error => {
             console.error('yt-dlp process error:', error);
+            interaction.reply(`Error: Please notify the person who runs the bot!\nError: ${error}`)
             session.player.stop();
         });
 
         ytProcess.on('close', code => {
             if (code !== 0) {
                 console.error(`yt-dlp process exited with code ${code}`);
+                interaction.reply(`Error: Likely YT cookies expired, need to renew them.\nPlease notify the person who runs the bot!\nCode: ${code}`)
             }
         });
 
@@ -104,10 +115,6 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ Commands only work inside servers!', ephemeral: true });
     }
 
-    if (commandName === 'hello') {
-        return interaction.reply('Hello — ready to rock! 🎸\nSay hello to my creator over at:\nhttps://benceveres.com');
-    }
-
     const voiceChannel = member.voice.channel;
     if (!voiceChannel) {
         return interaction.reply({ content: '❌ You must be in a voice channel!', ephemeral: true });
@@ -121,25 +128,49 @@ client.on('interactionCreate', async interaction => {
     switch (commandName) {
         case 'play':
             {
+                if (session.leaveTimeout) {
+                    clearTimeout(session.leaveTimeout);
+                    session.leaveTimeout = null;
+                }
+
                 const input = options.getString('url');
                 await interaction.deferReply();
 
                 const session = getOrCreateSession(guildId, voiceChannel, interaction);
 
 
-                let title = input;
+                let title = '';
                 let url = input;
 
                 // Check if it's a valid URL
                 const isURL = /^https?:\/\//i.test(input);
 
-                if (!isURL) {
-                    // It's a search term — use yt-dlp to fetch the top result
-                    try {
+                try {
+                    if (isURL) {
+                        // Get video title using yt-dlp
+                        const getTitle = spawn('yt-dlp', [
+                            '--no-playlist',
+                            '--print', '%(title)s',
+                            input
+                        ]);
+
+                        let output = '';
+                        for await (const chunk of getTitle.stdout) {
+                            output += chunk.toString();
+                        }
+
+                        title = output.trim();
+
+                        if (!title) {
+                            return interaction.editReply('❌ Failed to extract title from URL.');
+                        }
+                    } else {
+                        // It's a search term — use yt-dlp to fetch the top result
+
                         const search = spawn('yt-dlp', [
                             `ytsearch1:${input}`,
                             '--print',
-                            '%(title)s|%(webpage_url)s'
+                            '%(title)s||%(webpage_url)s'
                         ]);
 
                         let output = '';
@@ -150,35 +181,27 @@ client.on('interactionCreate', async interaction => {
 
                         const trimmed = output.trim();
 
-                        if (!trimmed || !trimmed.includes('|')) {
-                            return interaction.editReply('❌ No search results found for that query.');
-                        }
-
-                        const [foundTitle, foundURL] = trimmed.split('|');
-                        if (!foundTitle || !foundURL || !/^https?:\/\//.test(foundURL)) {
-                            return interaction.editReply('❌ Invalid search result received.');
+                        const [foundTitle, foundURL] = output.trim().split('||');
+                        if (!foundTitle || !foundURL) {
+                            return interaction.editReply('❌ No search results found.');
                         }
 
                         title = foundTitle;
                         url = foundURL;
-                    } catch (err) {
-                        console.error('❌ Search failed:', err);
-                        return interaction.editReply('❌ Search failed.');
                     }
-                } else {
-                    // URL provided — quick validation (but doesn't guarantee it's playable)
-                    if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
-                        return interaction.editReply('❌ Only YouTube URLs are supported.');
+
+
+                    session.queue.push({ title, url });
+
+                    if (session.queue.length === 1) {
+                        playNext(guildId);
                     }
+
+                    return interaction.editReply(`🎵 Queued: ${title} - ${url}`);
+                } catch (err) {
+                    console.error('❌ Failed to process input:', err);
+                    return interaction.editReply('❌ Something went wrong while processing the input.');
                 }
-
-                session.queue.push({ title, url });
-
-                if (session.queue.length === 1) {
-                    playNext(guildId);
-                }
-
-                return interaction.editReply(`🎵 Queued: ${title} - ${url}`);
             }
         case 'skip':
             {
@@ -221,6 +244,54 @@ client.on('interactionCreate', async interaction => {
                 session.connection.destroy();
                 queues.delete(guildId);
                 return interaction.reply('👋 Disconnected and cleared all memory.');
+            }
+        case 'stop':
+            {
+                const session = queues.get(guildId);
+                if (!session || session.queue.length === 0) {
+                    return interaction.reply('🚫🔊 Nothing is playing.');
+                }
+                session.player.stop(true);
+                return interaction.reply('⏹️ Stopped current track.');
+            }
+        case 'pause':
+            {
+                const session = queues.get(guildId);
+
+                if (!session || session.queue.length === 0) {
+                    return interaction.reply('🚫🔇 Nothing to pause.');
+                }
+
+                if (session.player.state.status === 'playing') {
+                    session.player.pause();
+                    return interaction.reply('⏸️ Paused playback.');
+                } else {
+                    return interaction.reply('⚠️ Not currently playing.');
+                }
+            }
+        case 'resume':
+            {
+                if (session.leaveTimeout) {
+                    clearTimeout(session.leaveTimeout);
+                    session.leaveTimeout = null;
+                }
+
+                const session = queues.get(guildId);
+
+                if (!session || session.queue.length === 0) {
+                    return interaction.reply('🚫🔊 Nothing to resume playing.');
+                }
+
+                if (session.player.state.status === 'paused') {
+                    session.player.unpause();
+                    return interaction.reply('▶️ Resumed playing.');
+                } else {
+                    return interaction.reply('⚠️ Not paused. Already playing or idle.');
+                }
+            }
+        case 'hello':
+            {
+                return interaction.reply('Hello — ready to rock! 🎸\nSay hello to my creator over at:\nhttps://benceveres.com');
             }
         default:
             interaction.reply('❓ Unknown command.');
