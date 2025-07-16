@@ -128,6 +128,7 @@ client.on('interactionCreate', async interaction => {
     switch (commandName) {
         case 'play':
             {
+                const session = getOrCreateSession(guildId, voiceChannel, interaction);
                 if (session.leaveTimeout) {
                     clearTimeout(session.leaveTimeout);
                     session.leaveTimeout = null;
@@ -136,7 +137,6 @@ client.on('interactionCreate', async interaction => {
                 const input = options.getString('url');
                 await interaction.deferReply();
 
-                const session = getOrCreateSession(guildId, voiceChannel, interaction);
 
 
                 let title = '';
@@ -150,6 +150,7 @@ client.on('interactionCreate', async interaction => {
                         // Get video title using yt-dlp
                         const getTitle = spawn('yt-dlp', [
                             '--no-playlist',
+                            '--cookies', `${cookieLocation}/yt_cookies.txt`,
                             '--print', '%(title)s',
                             input
                         ]);
@@ -158,17 +159,18 @@ client.on('interactionCreate', async interaction => {
                         for await (const chunk of getTitle.stdout) {
                             output += chunk.toString();
                         }
-
+                        
                         title = output.trim();
 
                         if (!title) {
-                            return interaction.editReply('❌ Failed to extract title from URL.');
+                            return interaction.editReply('❌ Failed to extract title from URL.\n(Possible cookies have expired, need manual intervention)');
                         }
                     } else {
                         // It's a search term — use yt-dlp to fetch the top result
 
                         const search = spawn('yt-dlp', [
                             `ytsearch1:${input}`,
+                            '--cookies', `${cookieLocation}/yt_cookies.txt`,
                             '--print',
                             '%(title)s||%(webpage_url)s'
                         ]);
@@ -183,7 +185,7 @@ client.on('interactionCreate', async interaction => {
 
                         const [foundTitle, foundURL] = output.trim().split('||');
                         if (!foundTitle || !foundURL) {
-                            return interaction.editReply('❌ No search results found.');
+                            return interaction.editReply('❌ No search results found.\n(Possible cookies have expired, need manual intervention)');
                         }
 
                         title = foundTitle;
@@ -271,12 +273,12 @@ client.on('interactionCreate', async interaction => {
             }
         case 'resume':
             {
+                const session = queues.get(guildId);
                 if (session.leaveTimeout) {
                     clearTimeout(session.leaveTimeout);
                     session.leaveTimeout = null;
                 }
 
-                const session = queues.get(guildId);
 
                 if (!session || session.queue.length === 0) {
                     return interaction.reply('🚫🔊 Nothing to resume playing.');
